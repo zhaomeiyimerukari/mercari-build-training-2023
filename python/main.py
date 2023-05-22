@@ -1,11 +1,11 @@
 import os
 import logging
 import pathlib
-from fastapi import FastAPI, Form, HTTPException, File, UploadFile
+from fastapi import FastAPI, Form, HTTPException, File, UploadFile,Query
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-import json
 import hashlib
+import sqlite3
 
 app = FastAPI()
 logger = logging.getLogger("uvicorn")
@@ -19,6 +19,38 @@ app.add_middleware(
     allow_methods=["GET","POST","PUT","DELETE"],
     allow_headers=["*"],
 )
+
+# Establish a connection to the SQLite database and create a cursor object
+conn = sqlite3.connect('mercari.sqlite3')
+cur = conn.cursor()
+# Create the table if it doesn't exist
+with conn:
+    cur.execute("""CREATE TABLE IF NOT EXISTS categories (
+        category_id INTEGER PRIMARY KEY,
+        category TEXT
+    )""")
+
+#with conn:
+    #category_name = 'fashion'
+    #cur.execute("""INSERT INTO categories (category) VALUES (?)""", (category_name,))
+
+# Modify the items table to use category_id instead of category name
+with conn:
+    cur.execute("""CREATE TABLE IF NOT EXISTS items (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        category_id INTEGER,
+        image_name TEXT,
+        FOREIGN KEY (category_id) REFERENCES categories(category_id)
+    )""")
+
+# Save the table structure to the file db/items.db
+with open('/Users/zhao/PycharmProjects/merukari/mercari-build-training-2023/db/items.db', 'w') as f:
+    schema = '\n'.join(conn.iterdump())
+    f.write(schema)
+
+conn.commit()
+conn.close()
 
 @app.get("/")
 def root():
@@ -35,19 +67,33 @@ def add_item(name: str = Form(...), category: str = Form(...), image: UploadFile
     with open(images / image_filename, "wb") as f:
         f.write(image_content)
 
-    # Load existing data
-    with open('items.json', 'r') as file:
-        data = json.load(file)
+    # Save the item to the database
+    category_id = check_category(category)
+    conn = sqlite3.connect('mercari.sqlite3')
+    cur = conn.cursor()
+    with conn:
+        cur.execute("""INSERT INTO items (name, category_id, image_name) VALUES (?, ?, ?)""",
+                    (name, category_id, image_filename))
+    conn.commit()
+    conn.close()
 
-    # Add new item
-    new_item = {"name": name, "category": category, "image": image_filename}
-    data['items'].append(new_item)
+    return {"message": f"item received: {name}, category_id: {category_id}, image: {image_filename}"}
+def check_category(category_name: str):
+    conn = sqlite3.connect('mercari.sqlite3')
+    cur = conn.cursor()
+    # check if the category name exists
+    with conn:
+        cur.execute("SELECT category_id FROM categories WHERE category = ?", (category_name,))
+    result = cur.fetchone()
+    conn.close()
 
-    # Save updated data
-    with open('items.json', 'w') as file:
-        json.dump(data, file)
+    if result is not None:
+        category_id = result[0]
+    else:
+        # Prevent customers from modifying the database.
+        raise HTTPException(status_code=404, detail="Category not found!")
 
-    return {"message": f"item received: {name}, category: {category}, image: {image_filename}"}
+    return category_id
 
 @app.get("/image/{image_filename}")
 async def get_image(image_filename):
@@ -63,18 +109,31 @@ async def get_image(image_filename):
 
     return FileResponse(image)
 
+@app.get("/search")
+def search_keyword(keyword: str = Query(..., description="Keyword for searching items")):
+    # Retrieve the item list from the database
+    conn = sqlite3.connect('mercari.sqlite3')
+    cur = conn.cursor()
+    with conn:
+        cur.execute("SELECT * FROM items WHERE name LIKE ?", (f"%{keyword}%",))
+        items = cur.fetchall()
+    conn.close()
+    # Convert the item list to the appropriate format and return
+    response = {
+        "items": items
+    }
+    return response
 @app.get("/items/{item_id}")
-def get_items():
-    try:
-        with open('items.json', 'r') as f:
-            items = json.load(f)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Items not found")
-    return items
-def get_item_id(item_id: int):
-    items = get_items()
-
-    if item_id >= len(items["items"]):
-        raise HTTPException(status_code=404, detail="Item id not found!")
-
-    return items["items"][item_id]
+def get_id_item(item_id: int):
+    # select by items.id
+    conn = sqlite3.connect('mercari.sqlite3')
+    cur = conn.cursor()
+    with conn:
+        cur.execute("SELECT * FROM items INNER JOIN categories ON items.id = ?", (item_id,))
+        items = cur.fetchall()
+    conn.close()
+    # Convert the item list to the appropriate format and return
+    response = {
+        "items": items
+    }
+    return response
