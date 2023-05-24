@@ -19,38 +19,30 @@ app.add_middleware(
     allow_methods=["GET","POST","PUT","DELETE"],
     allow_headers=["*"],
 )
-
 # Establish a connection to the SQLite database and create a cursor object
-conn = sqlite3.connect('mercari.sqlite3')
-cur = conn.cursor()
-# Create the table if it doesn't exist
-with conn:
-    cur.execute("""CREATE TABLE IF NOT EXISTS categories (
-        category_id INTEGER PRIMARY KEY,
-        category TEXT
-    )""")
-
-#with conn:
-    #category_name = 'fashion'
-    #cur.execute("""INSERT INTO categories (category) VALUES (?)""", (category_name,))
-
-# Modify the items table to use category_id instead of category name
-with conn:
-    cur.execute("""CREATE TABLE IF NOT EXISTS items (
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        category_id INTEGER,
-        image_name TEXT,
-        FOREIGN KEY (category_id) REFERENCES categories(category_id)
-    )""")
-
-# Save the table structure to the file db/items.db
-with open('/Users/zhao/PycharmProjects/merukari/mercari-build-training-2023/db/items.db', 'w') as f:
-    schema = '\n'.join(conn.iterdump())
-    f.write(schema)
-
-conn.commit()
-conn.close()
+def get_db_connection():
+    return sqlite3.connect('mercari.sqlite3')
+@app.on_event("startup")
+async def startup():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Create the table if it doesn't exist
+    with conn:
+        cur.execute("""CREATE TABLE IF NOT EXISTS categories (
+            category_id INTEGER PRIMARY KEY,
+            category TEXT
+        )""")
+    # Modify the items table to use category_id instead of category name
+    with conn:
+        cur.execute("""CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            category_id INTEGER,
+            image_name TEXT,
+            FOREIGN KEY (category_id) REFERENCES categories(category_id)
+        )""")
+    conn.commit()
+    conn.close()
 
 @app.get("/")
 def root():
@@ -68,9 +60,9 @@ def add_item(name: str = Form(...), category: str = Form(...), image: UploadFile
         f.write(image_content)
 
     # Save the item to the database
-    category_id = check_category(category)
-    conn = sqlite3.connect('mercari.sqlite3')
+    conn = get_db_connection()
     cur = conn.cursor()
+    category_id = check_category(category)
     with conn:
         cur.execute("""INSERT INTO items (name, category_id, image_name) VALUES (?, ?, ?)""",
                     (name, category_id, image_filename))
@@ -79,9 +71,9 @@ def add_item(name: str = Form(...), category: str = Form(...), image: UploadFile
 
     return {"message": f"item received: {name}, category_id: {category_id}, image: {image_filename}"}
 def check_category(category_name: str):
-    conn = sqlite3.connect('mercari.sqlite3')
-    cur = conn.cursor()
     # check if the category name exists
+    conn = get_db_connection()
+    cur = conn.cursor()
     with conn:
         cur.execute("SELECT category_id FROM categories WHERE category = ?", (category_name,))
     result = cur.fetchone()
@@ -112,7 +104,7 @@ async def get_image(image_filename):
 @app.get("/search")
 def search_keyword(keyword: str = Query(..., description="Keyword for searching items")):
     # Retrieve the item list from the database
-    conn = sqlite3.connect('mercari.sqlite3')
+    conn = get_db_connection()
     cur = conn.cursor()
     with conn:
         cur.execute("SELECT * FROM items WHERE name LIKE ?", (f"%{keyword}%",))
@@ -123,10 +115,11 @@ def search_keyword(keyword: str = Query(..., description="Keyword for searching 
         "items": items
     }
     return response
+
 @app.get("/items/{item_id}")
 def get_id_item(item_id: int):
     # select by items.id
-    conn = sqlite3.connect('mercari.sqlite3')
+    conn = get_db_connection()
     cur = conn.cursor()
     with conn:
         cur.execute("SELECT * FROM items INNER JOIN categories ON items.id = ?", (item_id,))
