@@ -1,8 +1,17 @@
-FROM alpine
+FROM python:3.8-alpine
 
-RUN addgroup -S mercari && adduser -S trainee -G mercari
-# RUN chown -R trainee:mercari /path/to/db
+WORKDIR /app
 
-USER trainee
+COPY requirements.txt requirements.txt
 
-CMD ["python", "-V"]
+COPY main.py main.py
+
+COPY db/mercari.sqlite3 /app/db/mercari.sqlite3
+
+RUN pip install -r requirements.txt
+
+VOLUME /db
+
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000"]
+
+
